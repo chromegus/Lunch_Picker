@@ -1,12 +1,8 @@
 ﻿using System;
 using System.Configuration;
-using System.Collections.Specialized;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using Newtonsoft.Json;
@@ -44,7 +40,7 @@ namespace LunchPickerClient
         {
             //Setup client
             client.BaseAddress = new Uri("https://developers.zomato.com/api/");
-            string apiKey = ConfigurationManager.AppSettings["ZomatoKey"];
+            var apiKey = ConfigurationManager.AppSettings["ZomatoKey"];
             client.DefaultRequestHeaders.Add("user-key", apiKey);
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 

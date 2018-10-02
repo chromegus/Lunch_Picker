@@ -1,5 +1,5 @@
 # Lunch_Picker
-##Silly test of calls to an API
+## Silly test of calls to an API
 
 You need to define an APIKeys.config file with the keys you wish to use, for example:
 

@@ -5,6 +5,9 @@ using System.Threading.Tasks;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using Newtonsoft.Json;
+using System.IO;
+using System.Collections.Generic;
+using System.Text;
 
 
 /*
@@ -21,6 +24,13 @@ using Newtonsoft.Json;
 * 
 * */
 
+/*
+* MODIFIED BY: Carlos Diaz - 10/04/2018
+* 
+* Put whole thing into a loop. Added simple result caching with file I/O.
+* 
+* */
+
 
 namespace LunchPickerClient
 {
@@ -31,14 +41,17 @@ namespace LunchPickerClient
         //Location hardcoded to district office
         private const double lat = 34.051868;
         private const double lon = -117.749901;
-        private static YelpRootObject search_results;
-        private static String cuisineChoice;
-        private static int restaurantIndex;
 
-        private static int debugMode;
+        private static YelpRootObject search_results;
+        private static string choice;
+
+        private static string systemPath = System.Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        private static string completePath = Path.Combine(systemPath, "LunchPickerCache.csv");
+
+        private static bool debugMode;
 
         //Reusing the same client throughout application, prevents socket errors
-        static HttpClient client = new HttpClient();
+        private static HttpClient client = new HttpClient();
 
         static void Main(string[] args)
         {
@@ -48,33 +61,61 @@ namespace LunchPickerClient
             client.DefaultRequestHeaders.Add("authorization", "Bearer " + apiKey);
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            Console.WriteLine("Welcome to Lunch-O-Picker v 1.4 :D POWERED BY YELP!\u2122 (I have to write that in or I get sued, apparently)\n");
+            Console.WriteLine("Welcome to Lunch-O-Picker v 1.4.1 :D POWERED BY YELP!\u2122 (I have to write that in or I get sued, apparently)\n");
 
             //TODO: Call API to get geolocation from IP
             Console.WriteLine("Current City: Pomona, CA");
 
-            Random randomGen = new Random();
-            debugMode = 0;
-
-            //Prompt for choice until we get one  or random
+            //Main loop
+            debugMode = false;
             do
             {
                 Console.WriteLine("\nWhat would you like to try today? (ie. American, Chinese, Mexican, etc.) You may choose Random if you aren't sure :)" +
-                    "\n(type debugmode to enable restaurant listing)");
-                cuisineChoice = Console.ReadLine();
+                    "\n(Type -o for options, -q to quit)");
+                choice = Console.ReadLine();
 
-                if (cuisineChoice.ToLower().Equals("debugmode"))
+                switch (choice)
                 {
-                    debugMode = 1;
+                    case "-o":
+                        Console.WriteLine("Available options: -o Shows this menu\n" +
+                                            "\t\t-d Toggle debug mode, displays full restaurant list used to choose from\n" +
+                                            "\t\t-q Quits application\n");
+                        break;
+                    case "-d":
+                        if (!debugMode)
+                        {
+                            debugMode = true;
+                            Console.WriteLine("Debug mode enabled");
+                        } else{
+                            debugMode = false;
+                            Console.WriteLine("Debug mode disabled");
+                        }
+                        break;
+                    case "-q":
+                        System.Environment.Exit(0);
+                        break;
+                    default:
+                        ProcessChoice();
+                        Console.WriteLine("DONE. TRY AGAIN? (y/n)");
+                        choice = Console.ReadLine();
+                        if(!choice.ToLower().Equals("y"))
+                        {
+                            System.Environment.Exit(0);
+                        }
+                        break;
+
                 }
+            } while (true);
+        }
 
-
-            } while (cuisineChoice.ToLower().Equals("debugmode") || cuisineChoice.Length < 1);
-
+        static void ProcessChoice()
+        {
             string uri;
-            if (!cuisineChoice.ToLower().Equals("random"))
+            //Maybe I should do something like soundex
+            choice = choice.ToLower().Replace(",", string.Empty);
+            if (!choice.Equals("random"))
             {
-                uri = string.Format("v3/businesses/search?term={0}&latitude={1}&longitude={2}&radius=9656&categories={3}&limit=10&sort_by=rating", cuisineChoice,
+                uri = string.Format("v3/businesses/search?term={0}&latitude={1}&longitude={2}&radius=9656&categories={3}&limit=10&sort_by=rating", choice,
                     lat, lon, "Restaurants");
             }
             else
@@ -83,15 +124,26 @@ namespace LunchPickerClient
                     lat, lon, "Restaurants");
             }
 
+            
+
+            //Get list of restaurants from cache, or online if not found/is expired
+            if (File.Exists(completePath))
+            {
+
+                ReadFromCache();
+            }
+            if(search_results == null)
+            {
+                RunYelpRestaurantsAsync(uri).GetAwaiter().GetResult();
+
+            }
 
 
-            //Get list of restaurants
-            RunYelpRestaurantsAsync(uri).GetAwaiter().GetResult();
-
+            Random randomGen = new Random();
             string finalresult;
             if (search_results.businesses.Count > 0)
             {
-                restaurantIndex = randomGen.Next(0, search_results.businesses.Count - 1);
+                int restaurantIndex = randomGen.Next(0, search_results.businesses.Count - 1);
                 finalresult = string.Format("\nYou should go to: {0}  Located at: {1}, {2}", search_results.businesses[restaurantIndex].name,
                     search_results.businesses[restaurantIndex].location.address1, search_results.businesses[restaurantIndex].location.city);
             }
@@ -99,28 +151,85 @@ namespace LunchPickerClient
             {
                 finalresult = "\nNo Nearby Locations Available :(";
             }
-
-
-
             Console.WriteLine(finalresult);
+        }
 
-            Console.WriteLine("DONE. PRESS ANY KEY TO EXIT...");
-            Console.ReadKey();
+        static void ReadFromCache()
+        {
+            List<YelpBusiness> businesses = new List<YelpBusiness>();
+            string csv = File.ReadAllText(completePath);
+            DateTime expire_date = DateTime.Parse(csv.Split('\n')[0]);
+            //I could use last date modified but if someone keeps running it, well...
+            if ((DateTime.Now - expire_date).TotalDays < 1)
+            {
+                //I wonder if a big enough file crashes, would stream be better then?
+                foreach (string row in csv.Split('\n'))
+                {
+                    if (!string.IsNullOrEmpty(row))
+                    {
+                        if (row.Split(',')[0].Equals(choice))
+                        {
+                            businesses.Add(new YelpBusiness()
+                            {
+                                name = row.Split(',')[1],
+                                location = new YelpLocation()
+                                {
+                                    address1 = row.Split(',')[2],
+                                    city = row.Split(',')[3]
+                                }
+                            });
+                        }
+                    }
+                }
+                if(businesses.Count > 0)
+                {
+                    search_results = new YelpRootObject();
+                    search_results.businesses = businesses;
+                    if (debugMode)
+                    {
+                        Console.WriteLine("From the cache:");
+                        ShowYelpRestaurants(search_results);
+                    }
+                }
+            }
+            //Reset cache
+            else
+            {
+                File.WriteAllText(completePath, DateTime.Now.ToString("MM/dd/yyyy HH:mm:ss") + '\n');
+            }
+        }
 
+        static void WriteToCache()
+        {
+            if (!File.Exists(completePath))
+            {
+                File.WriteAllText(completePath, DateTime.Now.ToString("MM/dd/yyyy HH:mm:ss") + '\n');
+            }
+
+            var records = new StringBuilder();
+            foreach(var business in search_results.businesses)
+            {
+                //Commas in our values will definitely cause issues, this is only a workaround
+                var newrow = string.Format("{0},{1},{2},{3}", choice, business.name.Replace(",", string.Empty), business.location.address1.Replace(",", string.Empty),
+                    business.location.city.Replace(",", string.Empty));
+                records.AppendLine(newrow);
+            }
+            File.AppendAllText(completePath, records.ToString());
         }
 
 
-        //Async methods for retrieving & showing data from API and deseralizing JSON to objects
-        private static async Task RunYelpRestaurantsAsync(string url)
+            //Async methods for retrieving & showing data from API and deseralizing JSON to objects
+            private static async Task RunYelpRestaurantsAsync(string url)
         {
             try
             {
                 search_results = new YelpRootObject();
                 search_results = await GetYelpRestaurantsAsync(url);
-                if (debugMode == 1)
+                if (debugMode)
                 {
                     ShowYelpRestaurants(search_results);
                 }
+                WriteToCache();
             }
             catch (Exception e)
             {
@@ -146,7 +255,7 @@ namespace LunchPickerClient
             foreach (var business in businesslist.businesses)
             {
                 Console.WriteLine($"Name: {business.name}\tAddress: " + $"{business.location.address1}\tCity: " +
-                    $"{business.location.city}\tRating: " + $"{business.rating}");
+                    $"{business.location.city}");
             }
 
         }

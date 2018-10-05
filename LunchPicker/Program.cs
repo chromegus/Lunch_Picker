@@ -124,15 +124,16 @@ namespace LunchPickerClient
                     lat, lon, "Restaurants");
             }
 
-            
+
 
             //Get list of restaurants from cache, or online if not found/is expired
+            search_results = new YelpRootObject();
             if (File.Exists(completePath))
             {
 
                 ReadFromCache();
             }
-            if(search_results == null)
+            if(search_results.businesses == null)
             {
                 RunYelpRestaurantsAsync(uri).GetAwaiter().GetResult();
 
@@ -183,7 +184,6 @@ namespace LunchPickerClient
                 }
                 if(businesses.Count > 0)
                 {
-                    search_results = new YelpRootObject();
                     search_results.businesses = businesses;
                     if (debugMode)
                     {
@@ -223,7 +223,6 @@ namespace LunchPickerClient
         {
             try
             {
-                search_results = new YelpRootObject();
                 search_results = await GetYelpRestaurantsAsync(url);
                 if (debugMode)
                 {
